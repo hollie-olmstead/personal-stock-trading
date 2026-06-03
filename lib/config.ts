@@ -45,7 +45,27 @@ export const ATR_PERIOD = 14;
 export const VOLUME_LOOKBACK = 20;
 
 // ── Swing Trade Parameters (1-5 day holds) ─────────────────
-export const SWING_HOLD_DAYS = [1, 5] as const;
+export const SWING_HOLD_DAYS = [1, 3, 5] as const;
 export const RISK_REWARD_MIN = 2.0;
 export const ATR_STOP_MULT = 2.0;    // wider for 1-5 day holds (was 1.5)
 export const ATR_TARGET_MULT = 4.0;  // wider target (was 3.0)
+
+// ── AltIndex API ──────────────────────────────────────────
+export const ALTINDEX_API_KEY = process.env.ALTINDEX_API_KEY || "";
+export const ALTINDEX_BASE_URL = "https://v2.api.altindex.com";
+
+// ── Composite Score Weights ───────────────────────────────
+export const SCORE_WEIGHTS = {
+  technicals: 0.40,
+  momentum: 0.20,
+  sentiment: 0.15,
+  volume: 0.15,
+  macro: 0.10,
+} as const;
+
+// ── Entry/Exit Matrix ─────────────────────────────────────
+export const ATR_STOP_TIGHT = 1.0;   // tight stop: 1x ATR
+export const ATR_STOP_WIDE = 2.0;    // wide stop: 2x ATR
+export const ATR_TARGET_T1 = 2.0;    // T1: 2x ATR — scale out 1/3
+export const ATR_TARGET_T2 = 4.0;    // T2: 4x ATR — scale out 1/3
+export const ATR_TARGET_T3 = 6.0;    // T3: 6x ATR — runner

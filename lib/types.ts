@@ -138,9 +138,107 @@ export interface MacroAnalysis {
   fearGreed: FearGreedData;
 }
 
+// ── Reddit Sentiment (AltIndex) ───────────────────────────
+export interface SentimentDataPoint {
+  date: string;
+  mentions: number;
+  sentiment: number;       // 0.0-1.0 (Reddit uses float)
+}
+
+export interface SentimentData {
+  ticker: string;
+  platform: "reddit";
+  handle: string | null;
+  current: SentimentDataPoint | null;
+  avg30d: { mentions: number; sentiment: number };
+  mentionChangePct: number;  // vs 30d avg
+  sentimentTrend: "RISING" | "FALLING" | "STABLE";
+  history: SentimentDataPoint[];  // last 30 days for sparkline
+}
+
+// ── Composite Score ───────────────────────────────────────
+export interface ScoreComponent {
+  name: string;
+  score: number;           // 0-100
+  weight: number;          // 0-1
+}
+
+export interface CompositeScore {
+  score: number;           // 0-100 weighted composite
+  label: "STRONG_BUY" | "BUY" | "NEUTRAL" | "SELL" | "STRONG_SELL";
+  components: ScoreComponent[];
+  history: { date: string; score: number; close: number }[];  // for overlay chart
+  trend30d: number;        // score change over 30 days
+  priceScoreCorrelation: "CONFIRMED" | "DIVERGING" | "NEUTRAL";
+  leadDays: number;        // how many days score led price (0 = in sync)
+}
+
+// ── Holding Period Outlook ────────────────────────────────
+export interface PeriodProjection {
+  days: number;
+  date: string;            // projected date
+  expectedMove: number;    // $ amount
+  expectedMovePct: number;
+  projectedPrice: number;
+  t1HitProb: number;      // 0-100
+  t2HitProb: number;
+  t3HitProb: number;
+  stopRiskPct: number;    // probability of hitting stop
+  expectedRR: number;
+}
+
+export interface HoldingOutlook {
+  periods: PeriodProjection[];
+  sweetSpot: number;       // recommended hold days (1, 3, or 5)
+  sweetSpotRR: number;
+  atrPerDay: number;
+}
+
+// ── Entry/Exit Matrix ─────────────────────────────────────
+export interface EntryLevel {
+  label: string;           // "Aggressive" | "Conservative"
+  price: number;
+  distance: string;        // e.g. "-1.9%"
+  note: string;
+  projectedPL: { days: number; amount: number; pct: number }[];
+}
+
+export interface StopLevel {
+  label: string;           // "Tight (1x ATR)" | "Wide (2x ATR)"
+  price: number;
+  riskPerShare: number;
+  note: string;
+}
+
+export interface TargetLevel {
+  label: string;           // "T1 — Scale 1/3" etc.
+  price: number;
+  distancePct: number;
+  rrRatio: number;
+  scaling: string;         // "Take 1/3, move stop to BE"
+  hitProb: { days: number; prob: number }[];
+}
+
+export interface EntryExitMatrix {
+  entries: EntryLevel[];
+  stops: StopLevel[];
+  targets: TargetLevel[];
+  bestCaseRR: number;
+  expectedRR: number;
+  maxRisk: number;
+}
+
+// ── Enhanced Signal (replaces Signal) ─────────────────────
+export interface EnhancedSignal extends Signal {
+  compositeScore: CompositeScore;
+  sentiment: SentimentData | null;
+  outlook: HoldingOutlook;
+  matrix: EntryExitMatrix;
+}
+
 // ── Scan result ────────────────────────────────────────────
 export interface ScanResult {
-  signals: Signal[];
+  signals: EnhancedSignal[];
   macro: MacroAnalysis;
   timestamp: string;
 }
