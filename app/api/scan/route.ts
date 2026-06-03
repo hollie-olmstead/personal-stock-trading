@@ -6,13 +6,13 @@
 
 import { NextResponse } from "next/server";
 import { MACRO_SYMBOLS, SECTOR_ETFS } from "@/lib/config";
-import { fetchDaily, fetchSnapshots } from "@/lib/polygon";
+import { fetchDaily, fetchSnapshots, fetchPutCallRatio, fetchAdvanceDecline } from "@/lib/polygon";
 import { analyzeWatchlist } from "@/lib/technicals";
 import { runMacroAnalysis } from "@/lib/macro";
 import { generateAllSignals } from "@/lib/signals";
 import type { ScanResult } from "@/lib/types";
 
-export const maxDuration = 60; // Vercel Pro: up to 60s
+export const maxDuration = 60;
 
 export async function POST(req: Request) {
   try {
@@ -23,24 +23,26 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "No tickers provided" }, { status: 400 });
     }
 
-    // Fetch all data in parallel
     const macroSymbols = Object.values(MACRO_SYMBOLS);
     const sectorSymbols = Object.keys(SECTOR_ETFS);
 
-    const [watchlistData, macroData, sectorData, snapshots] = await Promise.all([
+    // Fetch everything in parallel
+    const [watchlistData, macroData, sectorData, snapshots, putCall, advDec] = await Promise.all([
       fetchDaily(tickers),
       fetchDaily(macroSymbols),
       fetchDaily(sectorSymbols),
       fetchSnapshots(tickers),
+      fetchPutCallRatio(),
+      fetchAdvanceDecline(),
     ]);
 
-    // Run macro analysis
-    const macro = runMacroAnalysis(macroData, sectorData);
+    // Run macro analysis (now includes fear & greed, P/C, A/D)
+    const macro = runMacroAnalysis(macroData, sectorData, putCall, advDec);
 
     // Run technicals
     const technicals = analyzeWatchlist(watchlistData);
 
-    // Enrich with snapshot data (real-time VWAP, today's range)
+    // Enrich with snapshot data
     for (const [ticker, tech] of Object.entries(technicals)) {
       const snap = snapshots[ticker];
       if (snap) {

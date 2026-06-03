@@ -81,6 +81,38 @@ export interface SectorPerf {
   pct20d: number;
 }
 
+// ── Put/Call Ratio ─────────────────────────────────────────
+export interface PutCallData {
+  ratio: number;        // total put vol / total call vol
+  putVolume: number;
+  callVolume: number;
+  bias: string;         // BEARISH / NEUTRAL / BULLISH
+}
+
+// ── Advance/Decline ────────────────────────────────────────
+export interface AdvanceDeclineData {
+  advancers: number;
+  decliners: number;
+  unchanged: number;
+  ratio: number;        // advancers / decliners
+  netAdvance: number;   // advancers - decliners
+  bias: string;
+}
+
+// ── Fear & Greed ───────────────────────────────────────────
+export type FearGreedLabel = "EXTREME_FEAR" | "FEAR" | "NEUTRAL" | "GREED" | "EXTREME_GREED";
+
+export interface FearGreedData {
+  score: number;        // 0-100 (0 = extreme fear, 100 = extreme greed)
+  label: FearGreedLabel;
+  components: {
+    name: string;
+    score: number;      // 0-100
+    signal: string;
+  }[];
+}
+
+// ── Full macro analysis ────────────────────────────────────
 export interface MacroAnalysis {
   vix: MacroBias;
   yields: MacroBias;
@@ -101,6 +133,9 @@ export interface MacroAnalysis {
     rotationBias: string;
   };
   overall: MacroOverall;
+  putCall: PutCallData;
+  advanceDecline: AdvanceDeclineData;
+  fearGreed: FearGreedData;
 }
 
 // ── Scan result ────────────────────────────────────────────
