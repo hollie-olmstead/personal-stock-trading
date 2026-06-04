@@ -1,457 +1,222 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import type {
-  ScanResult, EnhancedSignal, SectorPerf, FearGreedData,
-  CompositeScore, HoldingOutlook, EntryExitMatrix, SentimentData,
-} from "@/lib/types";
+import type { ScanResult, EnhancedSignal, MacroAnalysis } from "@/lib/types";
 
-// ── Utility classes ──────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────
 
-const dirBg = (d: string) => d === "BUY" ? "bg-emerald-500" : d === "SELL" ? "bg-red-500" : "bg-slate-600";
-const dirText = (d: string) => d === "BUY" ? "text-emerald-400" : d === "SELL" ? "text-red-400" : "text-slate-400";
-const confCls = (c: string) =>
-  c === "HIGH" ? "text-emerald-400" :
-  c === "MEDIUM" ? "text-amber-400" :
-  c === "LOW" ? "text-orange-400" : "text-slate-600";
-const biasCls = (b: string) =>
-  (b.includes("BULLISH") || b === "RISK_ON") ? "text-emerald-400" :
-  (b.includes("BEARISH") || b === "CAUTIOUS" || b === "RISK_OFF") ? "text-red-400" : "text-amber-400";
-const pctCls = (n: number) => n >= 0 ? "text-emerald-400" : "text-red-400";
-const scoreCls = (n: number) => n >= 60 ? "text-emerald-400" : n >= 40 ? "text-amber-400" : "text-red-400";
-const scoreBarCls = (n: number) => n >= 60 ? "bg-emerald-500" : n >= 40 ? "bg-amber-500" : "bg-red-500";
-const probLabel = (p: number) => p >= 60 ? "Likely" : p >= 30 ? "Possible" : p > 5 ? "Unlikely" : "—";
-const probCls = (p: number) => p >= 60 ? "text-emerald-400" : p >= 30 ? "text-amber-400" : "text-slate-600";
-
-// ── Fear & Greed Gauge (compact) ─────────────────────────────
-
-function FGGauge({ data }: { data: FearGreedData }) {
-  const { score, label } = data;
-  const c = score <= 20 ? "#ef4444" : score <= 40 ? "#f97316" : score <= 60 ? "#eab308" : score <= 80 ? "#84cc16" : "#22c55e";
-  return (
-    <div className="flex items-center gap-4">
-      <div className="relative">
-        <svg viewBox="0 0 120 70" className="w-28">
-          <defs><linearGradient id="gg" x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%" stopColor="#ef4444"/><stop offset="25%" stopColor="#f97316"/>
-            <stop offset="50%" stopColor="#eab308"/><stop offset="75%" stopColor="#84cc16"/>
-            <stop offset="100%" stopColor="#22c55e"/>
-          </linearGradient></defs>
-          <path d="M 10 65 A 50 50 0 0 1 110 65" fill="none" stroke="#1e293b" strokeWidth="10" strokeLinecap="round"/>
-          <path d="M 10 65 A 50 50 0 0 1 110 65" fill="none" stroke="url(#gg)" strokeWidth="7" strokeLinecap="round" opacity="0.8"/>
-          <g transform={`rotate(${(score / 100) * 180 - 90}, 60, 65)`}>
-            <line x1="60" y1="65" x2="60" y2="22" stroke={c} strokeWidth="2" strokeLinecap="round"/>
-            <circle cx="60" cy="65" r="3.5" fill={c}/>
-          </g>
-        </svg>
-      </div>
-      <div>
-        <div className="text-2xl font-bold" style={{ color: c }}>{score}</div>
-        <div className="text-[10px] text-slate-500">{label.replace(/_/g, " ")}</div>
-      </div>
-      <div className="flex-1 grid grid-cols-3 gap-1">
-        {data.components.map((c) => (
-          <div key={c.name} className="text-center">
-            <div className="text-[9px] text-slate-600 truncate">{c.name.replace("Market ", "").replace("Stock Price ", "")}</div>
-            <div className={`text-xs font-semibold ${scoreCls(c.score)}`}>{c.score}</div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
+function cn(...classes: (string | false | undefined)[]) {
+  return classes.filter(Boolean).join(" ");
 }
 
-// ── Composite Score Panel ────────────────────────────────────
-
-function ScorePanel({ score }: { score: CompositeScore }) {
-  const c = score.score >= 60 ? "#22c55e" : score.score >= 40 ? "#eab308" : "#ef4444";
-  const offset = 289 - (score.score / 100) * 289;
-  return (
-    <div className="bg-slate-900/60 border border-slate-800/60 rounded-xl p-5">
-      <div className="text-xs font-semibold text-slate-400 mb-3">Composite score</div>
-      <div className="flex items-center gap-5 mb-4">
-        <div className="relative w-24 h-24 shrink-0">
-          <svg viewBox="0 0 110 110" className="w-24 h-24" style={{ transform: "rotate(-90deg)" }}>
-            <circle cx="55" cy="55" r="46" fill="none" stroke="#1e293b" strokeWidth="7"/>
-            <circle cx="55" cy="55" r="46" fill="none" stroke={c} strokeWidth="7"
-              strokeDasharray="289" strokeDashoffset={offset} strokeLinecap="round"/>
-          </svg>
-          <div className="absolute inset-0 flex flex-col items-center justify-center">
-            <span className="text-2xl font-bold" style={{ color: c }}>{score.score}</span>
-            <span className="text-[10px] text-slate-500">{score.label.replace(/_/g, " ")}</span>
-          </div>
-        </div>
-        <div className="flex-1 space-y-2">
-          {score.components.map((comp) => (
-            <div key={comp.name} className="flex items-center gap-2">
-              <span className="text-[11px] text-slate-500 w-20 shrink-0">{comp.name}</span>
-              <div className="flex-1 h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                <div className={`h-full rounded-full ${scoreBarCls(comp.score)}`} style={{ width: `${comp.score}%` }}/>
-              </div>
-              <span className={`text-[11px] font-semibold w-6 text-right ${scoreCls(comp.score)}`}>{comp.score}</span>
-              <span className="text-[9px] text-slate-700 w-7 text-right">{Math.round(comp.weight * 100)}%</span>
-            </div>
-          ))}
-        </div>
-      </div>
-      {/* Price + Score overlay chart */}
-      {score.history.length > 5 && (
-        <div>
-          <div className="flex items-center justify-between mb-1">
-            <div className="flex gap-3">
-              <span className="text-[10px] text-slate-500 flex items-center gap-1">
-                <span className="w-3 h-0.5 bg-slate-300 inline-block rounded"/>Price
-              </span>
-              <span className="text-[10px] text-slate-500 flex items-center gap-1">
-                <span className="w-3 h-0.5 bg-emerald-500 inline-block rounded" style={{ borderStyle: "dashed" }}/>Score
-              </span>
-            </div>
-          </div>
-          <ScoreChart history={score.history}/>
-          <div className="grid grid-cols-3 gap-2 mt-2">
-            <div className="bg-slate-800/50 rounded-lg p-2 text-center">
-              <div className="text-[9px] text-slate-600 uppercase">30d trend</div>
-              <div className={`text-xs font-semibold ${score.trend30d > 0 ? "text-emerald-400" : score.trend30d < 0 ? "text-red-400" : "text-slate-400"}`}>
-                {score.trend30d > 0 ? "+" : ""}{score.trend30d}
-              </div>
-            </div>
-            <div className="bg-slate-800/50 rounded-lg p-2 text-center">
-              <div className="text-[9px] text-slate-600 uppercase">Price vs score</div>
-              <div className={`text-xs font-semibold ${score.priceScoreCorrelation === "CONFIRMED" ? "text-emerald-400" : score.priceScoreCorrelation === "DIVERGING" ? "text-red-400" : "text-slate-400"}`}>
-                {score.priceScoreCorrelation.toLowerCase()}
-              </div>
-            </div>
-            <div className="bg-slate-800/50 rounded-lg p-2 text-center">
-              <div className="text-[9px] text-slate-600 uppercase">Score lead</div>
-              <div className="text-xs font-semibold text-slate-300">{score.leadDays}d</div>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
+function fmt(n: number | null | undefined, decimals = 2): string {
+  if (n == null) return "—";
+  return n.toFixed(decimals);
 }
 
-function ScoreChart({ history }: { history: CompositeScore["history"] }) {
-  if (history.length < 2) return null;
-  const W = 520, H = 100, PX = 0, PY = 4;
-  const prices = history.map((h) => h.close);
-  const scores = history.map((h) => h.score);
-  const pMin = Math.min(...prices), pMax = Math.max(...prices);
-  const pRange = pMax - pMin || 1;
+function pct(n: number | null | undefined): string {
+  if (n == null) return "—";
+  return `${n >= 0 ? "+" : ""}${n.toFixed(1)}%`;
+}
 
-  const toX = (i: number) => PX + (i / (history.length - 1)) * (W - PX * 2);
-  const toPY = (v: number) => PY + (1 - (v - pMin) / pRange) * (H - PY * 2);
-  const toSY = (v: number) => PY + (1 - v / 100) * (H - PY * 2);
+function dirColor(dir: string): string {
+  if (dir === "BUY") return "text-green-600";
+  if (dir === "SELL") return "text-red-600";
+  return "text-gray-500";
+}
 
-  const pricePath = history.map((h, i) => `${i === 0 ? "M" : "L"} ${toX(i).toFixed(1)} ${toPY(h.close).toFixed(1)}`).join(" ");
-  const scorePath = history.map((h, i) => `${i === 0 ? "M" : "L"} ${toX(i).toFixed(1)} ${toSY(h.score).toFixed(1)}`).join(" ");
+function dirBg(dir: string): string {
+  if (dir === "BUY") return "bg-green-50 text-green-700 border-green-200";
+  if (dir === "SELL") return "bg-red-50 text-red-700 border-red-200";
+  return "bg-gray-50 text-gray-600 border-gray-200";
+}
 
+function scoreBg(score: number): string {
+  if (score >= 70) return "bg-green-500";
+  if (score >= 55) return "bg-green-400";
+  if (score >= 45) return "bg-yellow-400";
+  if (score >= 30) return "bg-orange-400";
+  return "bg-red-500";
+}
+
+function scoreColor(score: number): string {
+  if (score >= 70) return "text-green-600";
+  if (score >= 55) return "text-green-500";
+  if (score >= 45) return "text-yellow-600";
+  if (score >= 30) return "text-orange-500";
+  return "text-red-600";
+}
+
+function fearGreedColor(score: number): string {
+  if (score >= 70) return "#16a34a";
+  if (score >= 55) return "#65a30d";
+  if (score >= 45) return "#ca8a04";
+  if (score >= 30) return "#ea580c";
+  return "#dc2626";
+}
+
+// ── Sparkline SVG ─────────────────────────────────────────────
+
+function Sparkline({ data, width = 120, height = 32, color = "#2563eb" }: {
+  data: number[]; width?: number; height?: number; color?: string;
+}) {
+  if (data.length < 2) return null;
+  const min = Math.min(...data);
+  const max = Math.max(...data);
+  const range = max - min || 1;
+  const points = data.map((v, i) => {
+    const x = (i / (data.length - 1)) * width;
+    const y = height - ((v - min) / range) * (height - 4) - 2;
+    return `${x},${y}`;
+  }).join(" ");
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" preserveAspectRatio="xMidYMid meet">
-      <line x1="0" y1={toSY(40)} x2={W} y2={toSY(40)} stroke="#334155" strokeWidth="0.5" strokeDasharray="3,3"/>
-      <line x1="0" y1={toSY(60)} x2={W} y2={toSY(60)} stroke="#334155" strokeWidth="0.5" strokeDasharray="3,3"/>
-      <path d={pricePath} fill="none" stroke="#cbd5e1" strokeWidth="1.5" strokeLinejoin="round"/>
-      <path d={scorePath} fill="none" stroke="#22c55e" strokeWidth="1.2" strokeLinejoin="round" strokeDasharray="4,2"/>
-      <circle cx={toX(history.length - 1)} cy={toPY(prices[prices.length - 1])} r="3" fill="#cbd5e1"/>
-      <circle cx={toX(history.length - 1)} cy={toSY(scores[scores.length - 1])} r="3" fill="#22c55e"/>
+    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}>
+      <polyline fill="none" stroke={color} strokeWidth="1.5" points={points} />
     </svg>
   );
 }
 
-// ── Sentiment Card ───────────────────────────────────────────
+// ── Score Ring SVG ─────────────────────────────────────────────
 
-function SentimentCard({ data }: { data: SentimentData }) {
-  const sentPct = Math.round((data.current?.sentiment ?? 0.5) * 100);
-  const trendIcon = data.sentimentTrend === "RISING" ? "▲" : data.sentimentTrend === "FALLING" ? "▼" : "—";
+function ScoreRing({ score, size = 100, label }: { score: number; size?: number; label: string }) {
+  const r = (size - 12) / 2;
+  const circ = 2 * Math.PI * r;
+  const offset = circ - (score / 100) * circ;
+  const color = score >= 70 ? "#16a34a" : score >= 55 ? "#65a30d" : score >= 45 ? "#ca8a04" : score >= 30 ? "#ea580c" : "#dc2626";
   return (
-    <div className="bg-slate-900/60 border border-slate-800/60 rounded-xl p-5">
-      <div className="text-xs font-semibold text-slate-400 mb-3">Reddit sentiment</div>
-      <div className="flex items-center gap-4 mb-3">
-        <div>
-          <div className={`text-3xl font-bold ${scoreCls(sentPct)}`}>{data.current?.sentiment.toFixed(2) ?? "—"}</div>
-          <div className="text-[10px] text-slate-600">sentiment (0-1)</div>
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="#e5e7eb" strokeWidth="8" />
+      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={color} strokeWidth="8"
+        strokeDasharray={circ} strokeDashoffset={offset}
+        strokeLinecap="round" transform={`rotate(-90 ${size/2} ${size/2})`} />
+      <text x={size/2} y={size/2 - 6} textAnchor="middle" fontSize="28" fontWeight="700" fill={color}>{score}</text>
+      <text x={size/2} y={size/2 + 14} textAnchor="middle" fontSize="11" fill="#6b7280">{label}</text>
+    </svg>
+  );
+}
+
+// ── Fear & Greed Gauge ────────────────────────────────────────
+
+function FearGreedGauge({ score, label }: { score: number; label: string }) {
+  const angle = -90 + (score / 100) * 180;
+  const color = fearGreedColor(score);
+  return (
+    <div className="flex items-center gap-3">
+      <svg width="72" height="44" viewBox="0 0 72 44">
+        <path d="M8,40 A28,28 0 0,1 64,40" fill="none" stroke="#e5e7eb" strokeWidth="7" strokeLinecap="round" />
+        <path d="M8,40 A28,28 0 0,1 64,40" fill="none" stroke={`url(#fg-grad)`} strokeWidth="7" strokeLinecap="round" />
+        <defs>
+          <linearGradient id="fg-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stopColor="#dc2626" />
+            <stop offset="25%" stopColor="#ea580c" />
+            <stop offset="50%" stopColor="#ca8a04" />
+            <stop offset="75%" stopColor="#65a30d" />
+            <stop offset="100%" stopColor="#16a34a" />
+          </linearGradient>
+        </defs>
+        <line x1="36" y1="40" x2={36 + 20 * Math.cos((angle * Math.PI) / 180)}
+          y2={40 + 20 * Math.sin((angle * Math.PI) / 180)}
+          stroke={color} strokeWidth="2.5" strokeLinecap="round" />
+        <circle cx="36" cy="40" r="3" fill={color} />
+      </svg>
+      <div>
+        <div className="text-2xl font-bold" style={{ color }}>{score}</div>
+        <div className="text-xs text-gray-500">{label.replace(/_/g, " ")}</div>
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════
+// MAIN VIEW — Ticker Cards
+// ══════════════════════════════════════════════════════════════
+
+function MainView({ data, onSelect }: { data: ScanResult; onSelect: (t: string) => void }) {
+  const { signals, macro } = data;
+  const buys = signals.filter((s) => s.direction === "BUY").length;
+  const sells = signals.filter((s) => s.direction === "SELL").length;
+  const holds = signals.filter((s) => s.direction === "HOLD").length;
+
+  return (
+    <div className="space-y-6">
+      {/* Summary Cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
+          <div className="text-sm text-gray-500 mb-2">Fear & Greed</div>
+          <FearGreedGauge score={macro.fearGreed.score} label={macro.fearGreed.label} />
         </div>
-        <div className="flex-1">
-          <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
-            <div className={`h-full rounded-full ${scoreBarCls(sentPct)}`} style={{ width: `${sentPct}%` }}/>
+        <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
+          <div className="text-sm text-gray-500 mb-2">Macro Score</div>
+          <div className="text-3xl font-bold">{macro.overall.score}</div>
+          <div className="text-sm text-gray-500">{macro.overall.condition.replace(/_/g, " ")}</div>
+        </div>
+        <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
+          <div className="text-sm text-gray-500 mb-2">Signals</div>
+          <div className="flex gap-4 text-2xl font-bold">
+            <span className="text-green-600">{buys}</span>
+            <span className="text-red-600">{sells}</span>
+            <span className="text-gray-400">{holds}</span>
           </div>
+          <div className="text-xs text-gray-400 mt-1">buy / sell / hold</div>
+        </div>
+        <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
+          <div className="text-sm text-gray-500 mb-2">VIX</div>
+          <div className="text-3xl font-bold">{fmt(macro.vix.level as number)}</div>
+          <div className="text-sm text-gray-500">{(macro.vix as Record<string, unknown>).regime as string}</div>
         </div>
       </div>
-      <div className="grid grid-cols-3 gap-2">
-        <div className="bg-slate-800/50 rounded-lg p-2 text-center">
-          <div className="text-[9px] text-slate-600 uppercase">Mentions</div>
-          <div className="text-sm font-semibold">{data.current?.mentions ?? 0}</div>
-          <div className={`text-[10px] ${data.mentionChangePct >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-            {data.mentionChangePct > 0 ? "+" : ""}{data.mentionChangePct}% vs avg
-          </div>
-        </div>
-        <div className="bg-slate-800/50 rounded-lg p-2 text-center">
-          <div className="text-[9px] text-slate-600 uppercase">30d avg</div>
-          <div className="text-sm font-semibold">{data.avg30d.sentiment.toFixed(2)}</div>
-          <div className="text-[10px] text-slate-600">{data.avg30d.mentions} mentions/d</div>
-        </div>
-        <div className="bg-slate-800/50 rounded-lg p-2 text-center">
-          <div className="text-[9px] text-slate-600 uppercase">Trend</div>
-          <div className={`text-sm font-semibold ${data.sentimentTrend === "RISING" ? "text-emerald-400" : data.sentimentTrend === "FALLING" ? "text-red-400" : "text-slate-400"}`}>
-            {trendIcon} {data.sentimentTrend.toLowerCase()}
-          </div>
-        </div>
-      </div>
-      {/* Mention sparkline */}
-      {data.history.length > 3 && (
-        <div className="flex items-end gap-px mt-3 h-5">
-          {data.history.slice(-14).map((d, i) => {
-            const max = Math.max(...data.history.slice(-14).map((h) => h.mentions), 1);
-            const h = Math.max(2, (d.mentions / max) * 20);
-            return <span key={i} className="flex-1 rounded-sm bg-slate-700" style={{ height: `${h}px` }}/>;
-          })}
+
+      {/* Sectors */}
+      {macro.sectors.rankings.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {macro.sectors.rankings.map((s) => (
+            <span key={s.etf} className={cn(
+              "px-3 py-1.5 rounded-full text-sm font-medium border",
+              s.pct5d >= 0 ? "bg-green-50 text-green-700 border-green-200" : "bg-red-50 text-red-700 border-red-200"
+            )}>
+              {s.sector} {pct(s.pct5d)}
+            </span>
+          ))}
         </div>
       )}
-    </div>
-  );
-}
 
-// ── Holding Period Outlook ────────────────────────────────────
-
-function OutlookPanel({ outlook }: { outlook: HoldingOutlook }) {
-  if (outlook.periods.length === 0) return null;
-  return (
-    <div className="bg-slate-900/60 border border-slate-800/60 rounded-xl p-5">
-      <div className="text-xs font-semibold text-slate-400 mb-3">Holding period outlook</div>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-[10px] text-slate-600 uppercase">
-              <th className="text-left py-1 pr-2"></th>
-              {outlook.periods.map((p) => (
-                <th key={p.days} className="text-center py-1 px-2">
-                  <div className="font-semibold text-slate-400 text-xs">{p.days}d</div>
-                  <div className="text-[9px] text-slate-700">{p.date}</div>
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody className="text-xs">
-            <tr className="border-t border-slate-800/50">
-              <td className="py-2 pr-2 text-slate-500 font-medium">Expected move</td>
-              {outlook.periods.map((p) => (
-                <td key={p.days} className="text-center py-2 px-2">
-                  <span className={`font-semibold ${pctCls(p.expectedMove)}`}>{p.expectedMove > 0 ? "+" : ""}${p.expectedMove.toFixed(2)}</span>
-                  <br/><span className="text-[10px] text-slate-600">{p.expectedMovePct > 0 ? "+" : ""}{p.expectedMovePct}%</span>
-                </td>
-              ))}
-            </tr>
-            <tr className="border-t border-slate-800/50">
-              <td className="py-2 pr-2 text-slate-500 font-medium">Hits T1</td>
-              {outlook.periods.map((p) => (
-                <td key={p.days} className="text-center py-2 px-2">
-                  <span className={`text-[11px] ${probCls(p.t1HitProb)}`}>{probLabel(p.t1HitProb)}</span>
-                  <div className="w-10 h-1 bg-slate-800 rounded-full mx-auto mt-1 overflow-hidden">
-                    <div className={`h-full rounded-full ${scoreBarCls(p.t1HitProb)}`} style={{ width: `${p.t1HitProb}%` }}/>
-                  </div>
-                </td>
-              ))}
-            </tr>
-            <tr className="border-t border-slate-800/50">
-              <td className="py-2 pr-2 text-slate-500 font-medium">Hits T2</td>
-              {outlook.periods.map((p) => (
-                <td key={p.days} className="text-center py-2 px-2">
-                  <span className={`text-[11px] ${probCls(p.t2HitProb)}`}>{probLabel(p.t2HitProb)}</span>
-                  <div className="w-10 h-1 bg-slate-800 rounded-full mx-auto mt-1 overflow-hidden">
-                    <div className={`h-full rounded-full ${scoreBarCls(p.t2HitProb)}`} style={{ width: `${p.t2HitProb}%` }}/>
-                  </div>
-                </td>
-              ))}
-            </tr>
-            <tr className="border-t border-slate-800/50">
-              <td className="py-2 pr-2 text-slate-500 font-medium">Stop risk</td>
-              {outlook.periods.map((p) => (
-                <td key={p.days} className="text-center py-2 px-2">
-                  <span className={`text-[11px] ${p.stopRiskPct > 25 ? "text-red-400" : p.stopRiskPct > 15 ? "text-amber-400" : "text-emerald-400"}`}>
-                    {p.stopRiskPct}%
-                  </span>
-                </td>
-              ))}
-            </tr>
-          </tbody>
-        </table>
-      </div>
-      <div className="grid grid-cols-3 gap-2 mt-3">
-        <div className="bg-slate-800/50 rounded-lg p-2 text-center">
-          <div className="text-[9px] text-slate-600 uppercase">Sweet spot</div>
-          <div className="text-sm font-semibold text-emerald-400">{outlook.sweetSpot} day</div>
-        </div>
-        <div className="bg-slate-800/50 rounded-lg p-2 text-center">
-          <div className="text-[9px] text-slate-600 uppercase">Expected R:R</div>
-          <div className="text-sm font-semibold text-emerald-400">{outlook.sweetSpotRR}:1</div>
-        </div>
-        <div className="bg-slate-800/50 rounded-lg p-2 text-center">
-          <div className="text-[9px] text-slate-600 uppercase">ATR/day</div>
-          <div className="text-sm font-semibold">${outlook.atrPerDay}</div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── Entry/Exit Matrix ────────────────────────────────────────
-
-function MatrixPanel({ matrix, holdDays }: { matrix: EntryExitMatrix; holdDays: number[] }) {
-  if (matrix.entries.length === 0) return null;
-  return (
-    <div className="bg-slate-900/60 border border-slate-800/60 rounded-xl p-5">
-      <div className="text-xs font-semibold text-slate-400 mb-3">Entry / exit matrix</div>
-      <div className="overflow-x-auto">
-        <table className="w-full text-xs">
-          <thead>
-            <tr className="text-[10px] text-slate-600 uppercase">
-              <th className="text-left py-1"></th>
-              <th className="text-left py-1">Price</th>
-              {holdDays.map((d) => <th key={d} className="text-center py-1">{d}d P/L</th>)}
-              <th className="text-left py-1">Notes</th>
-            </tr>
-          </thead>
-          <tbody>
-            {matrix.entries.map((e, i) => (
-              <tr key={e.label} className={`border-t border-slate-800/50 ${i === 0 ? "bg-slate-800/20" : ""}`}>
-                <td className="py-2 pr-2 font-medium text-slate-400 border-l-2 pl-2" style={{ borderColor: i === 0 ? "#22c55e" : "#3b82f6" }}>{e.label}</td>
-                <td className="py-2 font-mono font-semibold">${e.price.toFixed(2)}</td>
-                {e.projectedPL.map((pl) => (
-                  <td key={pl.days} className={`text-center py-2 ${pctCls(pl.amount)}`}>
-                    {pl.amount > 0 ? "+" : ""}${pl.amount.toFixed(2)}
-                    <br/><span className="text-[10px] text-slate-600">({pl.pct > 0 ? "+" : ""}{pl.pct}%)</span>
-                  </td>
-                ))}
-                <td className="py-2 text-slate-600 text-[11px]">{e.note}</td>
-              </tr>
-            ))}
-            <tr><td colSpan={3 + holdDays.length} className="py-1 text-[9px] text-slate-700 uppercase tracking-wider font-semibold bg-slate-800/30 px-2">Stops</td></tr>
-            {matrix.stops.map((s) => (
-              <tr key={s.label} className="border-t border-slate-800/50">
-                <td className="py-2 pr-2 font-medium text-slate-400 border-l-2 pl-2 border-l-red-500">{s.label}</td>
-                <td className="py-2 font-mono font-semibold text-red-400">${s.price.toFixed(2)}</td>
-                <td colSpan={holdDays.length} className="py-2 text-slate-600 text-[11px]">Risk: ${s.riskPerShare.toFixed(2)}/share</td>
-                <td className="py-2 text-slate-600 text-[11px]">{s.note}</td>
-              </tr>
-            ))}
-            <tr><td colSpan={3 + holdDays.length} className="py-1 text-[9px] text-slate-700 uppercase tracking-wider font-semibold bg-slate-800/30 px-2">Targets</td></tr>
-            {matrix.targets.map((t) => (
-              <tr key={t.label} className="border-t border-slate-800/50">
-                <td className="py-2 pr-2 font-medium text-slate-400 border-l-2 pl-2 border-l-emerald-500">{t.label}</td>
-                <td className="py-2 font-mono font-semibold text-emerald-400">${t.price.toFixed(2)}</td>
-                {t.hitProb.map((hp) => (
-                  <td key={hp.days} className={`text-center py-2 ${probCls(hp.prob)}`}>
-                    {probLabel(hp.prob)}<br/><span className="text-[10px]">{hp.prob}%</span>
-                  </td>
-                ))}
-                <td className="py-2 text-slate-600 text-[11px]">{t.scaling}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <div className="grid grid-cols-3 gap-2 mt-3">
-        <div className="bg-slate-800/50 rounded-lg p-2 text-center">
-          <div className="text-[9px] text-slate-600 uppercase">Best case R:R</div>
-          <div className="text-sm font-semibold text-emerald-400">{matrix.bestCaseRR}:1</div>
-        </div>
-        <div className="bg-slate-800/50 rounded-lg p-2 text-center">
-          <div className="text-[9px] text-slate-600 uppercase">Expected R:R</div>
-          <div className="text-sm font-semibold text-emerald-400">{matrix.expectedRR}:1</div>
-        </div>
-        <div className="bg-slate-800/50 rounded-lg p-2 text-center">
-          <div className="text-[9px] text-slate-600 uppercase">Max risk (wide)</div>
-          <div className="text-sm font-semibold text-red-400">${matrix.maxRisk}/sh</div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── Signal Row ───────────────────────────────────────────────
-
-function SignalRow({ sig, selected, onClick }: { sig: EnhancedSignal; selected: boolean; onClick: () => void }) {
-  return (
-    <div
-      onClick={onClick}
-      className={`grid grid-cols-[80px_48px_60px_70px_70px_70px_50px_60px] items-center px-3 py-2.5 rounded-lg cursor-pointer transition-all border
-        ${selected ? "border-blue-500/40 bg-slate-800/50" : "border-transparent hover:bg-slate-800/30"}`}
-    >
+      {/* Ticker Cards */}
       <div>
-        <div className="text-sm font-semibold">{sig.ticker}</div>
-        <div className="text-[11px] text-slate-600">${sig.close.toFixed(2)}</div>
-      </div>
-      <span className={`text-[10px] font-bold px-2 py-0.5 rounded text-center ${sig.direction === "BUY" ? "bg-emerald-500/20 text-emerald-400" : sig.direction === "SELL" ? "bg-red-500/20 text-red-400" : "bg-slate-700/50 text-slate-500"}`}>
-        {sig.direction}
-      </span>
-      <span className={`text-[11px] font-medium text-center ${confCls(sig.confidence)}`}>{sig.confidence}</span>
-      <span className="text-xs font-mono text-center">${sig.entry.toFixed(2)}</span>
-      <span className="text-xs font-mono text-center text-red-400">{sig.stop ? `$${sig.stop.toFixed(2)}` : "—"}</span>
-      <span className="text-xs font-mono text-center text-emerald-400">{sig.target ? `$${sig.target.toFixed(2)}` : "—"}</span>
-      <span className="text-xs font-mono text-center">{sig.rrRatio.toFixed(1)}</span>
-      <div className="text-center">
-        <div className={`text-xs font-bold ${scoreCls(sig.compositeScore.score)}`}>{sig.compositeScore.score}</div>
-        <div className="text-[9px] text-slate-700">{sig.outlook.sweetSpot}d</div>
-      </div>
-    </div>
-  );
-}
-
-// ── Detail View ──────────────────────────────────────────────
-
-function DetailView({ sig }: { sig: EnhancedSignal }) {
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-3 mb-1">
-        <span className="text-xl font-bold">{sig.ticker}</span>
-        <span className="text-slate-500">${sig.close.toFixed(2)}</span>
-        <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded ${sig.direction === "BUY" ? "bg-emerald-500/20 text-emerald-400" : sig.direction === "SELL" ? "bg-red-500/20 text-red-400" : "bg-slate-700/50 text-slate-500"}`}>
-          {sig.direction}
-        </span>
-        <span className={`text-xs font-medium ${confCls(sig.confidence)}`}>{sig.confidence} confidence</span>
-      </div>
-
-      {/* Indicators row */}
-      <div className="grid grid-cols-5 gap-2">
-        {[
-          { l: "RSI (14)", v: String(sig.rsi) },
-          { l: "EMA cross", v: sig.emaCross, c: sig.emaCross === "BULLISH" ? "text-emerald-400" : "text-red-400" },
-          { l: "VWAP", v: sig.vwapPosition, c: sig.vwapPosition === "ABOVE" ? "text-emerald-400" : "text-red-400" },
-          { l: "Rel volume", v: `${sig.rvol}x` },
-          { l: "ATR (14)", v: `$${sig.atr.toFixed(2)}` },
-        ].map(({ l, v, c }) => (
-          <div key={l} className="bg-slate-800/50 rounded-lg p-2.5">
-            <div className="text-[9px] text-slate-600 uppercase">{l}</div>
-            <div className={`text-sm font-semibold mt-0.5 ${c ?? ""}`}>{v}</div>
-          </div>
-        ))}
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <ScorePanel score={sig.compositeScore}/>
-        {sig.sentiment ? <SentimentCard data={sig.sentiment}/> : (
-          <div className="bg-slate-900/60 border border-slate-800/60 rounded-xl p-5 flex items-center justify-center">
-            <div className="text-center text-slate-700">
-              <div className="text-sm">No sentiment data</div>
-              <div className="text-[11px] mt-1">Add ALTINDEX_API_KEY to enable</div>
-            </div>
-          </div>
-        )}
-      </div>
-
-      <OutlookPanel outlook={sig.outlook}/>
-      <MatrixPanel matrix={sig.matrix} holdDays={sig.outlook.periods.map((p) => p.days)}/>
-
-      {/* Signal reasons */}
-      <div className="bg-slate-900/60 border border-slate-800/60 rounded-xl p-5">
-        <div className="text-xs font-semibold text-slate-400 mb-3">Signal reasons</div>
-        <div className="space-y-1">
-          {sig.reasons.map((r, i) => (
-            <div key={i} className="flex items-center gap-2 text-xs text-slate-400">
-              <span className={`w-1 h-1 rounded-full shrink-0 ${sig.direction === "BUY" ? "bg-emerald-500" : sig.direction === "SELL" ? "bg-red-500" : "bg-slate-600"}`}/>
-              {r}
-            </div>
+        <h2 className="text-lg font-semibold mb-3">Watchlist</h2>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+          {signals.map((sig) => (
+            <button key={sig.ticker} onClick={() => onSelect(sig.ticker)}
+              className="bg-white rounded-xl p-4 shadow-sm border border-gray-100 text-left hover:shadow-md hover:border-gray-200 transition-all group">
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <div className="text-lg font-bold">{sig.ticker}</div>
+                  <div className="text-sm text-gray-500">${fmt(sig.close)}</div>
+                </div>
+                <span className={cn("px-2.5 py-1 rounded-lg text-sm font-semibold border", dirBg(sig.direction))}>
+                  {sig.direction}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <div>
+                  <span className="text-gray-500">Score </span>
+                  <span className={cn("font-semibold", scoreColor(sig.compositeScore.score))}>{sig.compositeScore.score}</span>
+                </div>
+                <div>
+                  <span className="text-gray-500">R:R </span>
+                  <span className="font-semibold">{fmt(sig.matrix.expectedRR, 1)}</span>
+                </div>
+                <div>
+                  <span className="text-gray-500">Hold </span>
+                  <span className="font-semibold">{sig.outlook.sweetSpot}d</span>
+                </div>
+              </div>
+              {sig.compositeScore.history.length > 1 && (
+                <div className="mt-2 opacity-60 group-hover:opacity-100 transition-opacity">
+                  <Sparkline data={sig.compositeScore.history.map((h) => h.close)} width={200} height={28}
+                    color={sig.direction === "BUY" ? "#16a34a" : sig.direction === "SELL" ? "#dc2626" : "#9ca3af"} />
+                </div>
+              )}
+            </button>
           ))}
         </div>
       </div>
@@ -459,187 +224,508 @@ function DetailView({ sig }: { sig: EnhancedSignal }) {
   );
 }
 
-// ── Main Page ────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════
+// DETAIL VIEW — Full-page stock detail
+// ══════════════════════════════════════════════════════════════
 
-type Filter = "ALL" | "BUY" | "SELL" | "HIGH";
-
-export default function Home() {
-  const [watchlist, setWatchlist] = useState<string[]>([]);
-  const [newTicker, setNewTicker] = useState("");
-  const [result, setResult] = useState<ScanResult | null>(null);
-  const [scanning, setScanning] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [filter, setFilter] = useState<Filter>("ALL");
-  const [selected, setSelected] = useState<string | null>(null);
-
-  useEffect(() => {
-    fetch("/api/watchlist").then((r) => r.json()).then((d) => setWatchlist(d.tickers ?? []))
-      .catch(() => setWatchlist(["APLD","AMPX","ONDS","ALAB","MRVL","BE","KEEL","RZLV","PTRN","LITE","RDW","ASTS"]));
-  }, []);
-
-  const runScan = useCallback(async (tickers: string[]) => {
-    if (tickers.length === 0) return;
-    setScanning(true); setError(null); setSelected(null);
-    try {
-      const resp = await fetch("/api/scan", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tickers }) });
-      if (!resp.ok) throw new Error((await resp.json()).error || "Scan failed");
-      const data = await resp.json();
-      setResult(data);
-      if (data.signals.length > 0) setSelected(data.signals[0].ticker);
-    } catch (e) { setError(String(e)); } finally { setScanning(false); }
-  }, []);
-
-  const addTicker = () => {
-    const t = newTicker.toUpperCase().trim();
-    if (!t || watchlist.includes(t)) return;
-    setNewTicker("");
-    setWatchlist((prev) => [...prev, t]);
-    fetch("/api/watchlist", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "add", ticker: t }) }).catch(() => {});
-  };
-  const removeTicker = (t: string) => {
-    setWatchlist((prev) => prev.filter((x) => x !== t));
-    fetch("/api/watchlist", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "remove", ticker: t }) }).catch(() => {});
-  };
-
-  const filtered = result?.signals.filter((s) =>
-    filter === "ALL" ? true : filter === "HIGH" ? s.confidence === "HIGH" : s.direction === filter
-  ) ?? [];
-  const selectedSig = result?.signals.find((s) => s.ticker === selected) ?? null;
-  const macro = result?.macro;
-  const counts = {
-    buy: result?.signals.filter((s) => s.direction === "BUY").length ?? 0,
-    sell: result?.signals.filter((s) => s.direction === "SELL").length ?? 0,
-    hold: result?.signals.filter((s) => s.direction === "HOLD").length ?? 0,
-  };
+function DetailView({ signal, macro, onBack }: { signal: EnhancedSignal; macro: MacroAnalysis; onBack: () => void }) {
+  const sig = signal;
+  const cs = sig.compositeScore;
+  const ol = sig.outlook;
+  const mx = sig.matrix;
+  const sent = sig.sentiment;
 
   return (
-    <div className="min-h-screen bg-[#0b0f1a]">
-      {/* TOP BAR */}
-      <header className="border-b border-slate-800/60 bg-[#0f1420] sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
-          <div>
-            <h1 className="text-sm font-bold tracking-tight text-slate-200">SWING TRADER</h1>
-            <p className="text-[10px] text-slate-600 uppercase tracking-widest">1-5 day signals</p>
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center gap-4">
+        <button onClick={onBack} className="w-10 h-10 rounded-full bg-white shadow-sm border border-gray-200 flex items-center justify-center hover:bg-gray-50 text-lg">
+          &#8592;
+        </button>
+        <div className="flex-1">
+          <div className="flex items-center gap-3">
+            <h1 className="text-3xl font-bold">{sig.ticker}</h1>
+            <span className={cn("px-3 py-1 rounded-lg text-sm font-semibold border", dirBg(sig.direction))}>
+              {sig.direction}
+            </span>
+            <span className="text-sm text-gray-500">{sig.confidence} confidence</span>
           </div>
-          <div className="flex items-center gap-2">
-            <div className="flex gap-1 text-[11px] text-slate-600">
-              {watchlist.map((t) => (
-                <span key={t} className="group relative">
-                  <span className="bg-slate-800/60 px-1.5 py-0.5 rounded text-slate-500 hover:text-slate-300 cursor-default">{t}</span>
-                  <button onClick={() => removeTicker(t)} className="absolute -top-1 -right-1 w-3 h-3 bg-red-500/80 rounded-full text-[8px] text-white leading-none hidden group-hover:flex items-center justify-center">&times;</button>
-                </span>
+          <div className="text-xl text-gray-600 mt-1">${fmt(sig.close)}</div>
+        </div>
+      </div>
+
+      {/* Technical Stats */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+        {[
+          { label: "RSI (14)", value: fmt(sig.rsi, 1) },
+          { label: "EMA Cross", value: sig.emaCross, accent: sig.emaCross === "BULLISH" },
+          { label: "VWAP", value: sig.vwapPosition, accent: sig.vwapPosition === "ABOVE" },
+          { label: "Rel Volume", value: `${fmt(sig.rvol, 2)}x` },
+          { label: "ATR (14)", value: `$${fmt(sig.atr)}` },
+        ].map((item) => (
+          <div key={item.label} className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
+            <div className="text-xs text-gray-500 uppercase tracking-wide">{item.label}</div>
+            <div className={cn("text-xl font-bold mt-1",
+              item.accent === true ? "text-green-600" : item.accent === false ? "text-red-600" : ""
+            )}>
+              {item.value}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Two-column: Score + Sentiment */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Composite Score */}
+        <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100">
+          <h3 className="text-base font-semibold mb-4">Composite Score</h3>
+          <div className="flex gap-6">
+            <ScoreRing score={cs.score} size={110} label={cs.label.replace(/_/g, " ")} />
+            <div className="flex-1 space-y-2">
+              {cs.components.map((c) => (
+                <div key={c.name} className="flex items-center gap-2">
+                  <span className="text-sm text-gray-600 w-24 shrink-0">{c.name}</span>
+                  <div className="flex-1 h-2.5 bg-gray-100 rounded-full overflow-hidden">
+                    <div className={cn("h-full rounded-full", scoreBg(c.score))}
+                      style={{ width: `${c.score}%` }} />
+                  </div>
+                  <span className="text-sm font-medium w-8 text-right">{c.score}</span>
+                </div>
               ))}
             </div>
-            <form onSubmit={(e) => { e.preventDefault(); addTicker(); }} className="flex gap-1">
-              <input type="text" value={newTicker} onChange={(e) => setNewTicker(e.target.value.toUpperCase())}
-                placeholder="Add ticker..." className="bg-slate-800/50 border border-slate-700/40 rounded px-2 py-1 text-xs w-24 focus:outline-none focus:border-blue-500/50 placeholder-slate-700 text-slate-300"/>
-              <button type="submit" disabled={!newTicker.trim()} className="bg-slate-800 hover:bg-slate-700 disabled:opacity-30 text-xs px-2 py-1 rounded text-slate-400">+</button>
-            </form>
-            <button onClick={() => runScan(watchlist)} disabled={scanning || watchlist.length === 0}
-              className="bg-blue-600 hover:bg-blue-500 disabled:bg-slate-800 disabled:text-slate-600 text-white text-xs font-semibold px-4 py-1.5 rounded-lg transition-colors flex items-center gap-1.5">
-              {scanning ? (<><span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin"/>Scanning...</>) : "Scan"}
-            </button>
           </div>
-        </div>
-      </header>
-
-      <main className="max-w-7xl mx-auto px-4 py-4">
-        {scanning && (
-          <div className="flex items-center justify-center py-32">
-            <div className="text-center">
-              <div className="w-14 h-14 border-4 border-blue-500/20 border-t-blue-500 rounded-full animate-spin mx-auto mb-3"/>
-              <p className="text-slate-400 text-sm">Scanning {watchlist.length} tickers...</p>
-              <p className="text-slate-700 text-xs mt-1">Fetching prices, technicals, sentiment &amp; macro</p>
-            </div>
-          </div>
-        )}
-
-        {error && !scanning && <div className="bg-red-500/10 border border-red-500/20 text-red-400 rounded-xl p-4 text-sm mb-4">{error}</div>}
-
-        {!result && !scanning && !error && (
-          <div className="flex items-center justify-center py-32 text-center">
-            <div>
-              <p className="text-slate-500 text-lg mb-1">Ready to scan</p>
-              <p className="text-slate-700 text-sm">Add tickers and hit <strong className="text-slate-500">Scan</strong> to generate signals.</p>
-            </div>
-          </div>
-        )}
-
-        {result && !scanning && (
-          <div className="space-y-4">
-            {/* Summary row */}
-            <div className="grid grid-cols-4 gap-3">
-              <div className="bg-slate-900/40 rounded-xl p-4">
-                <div className="text-[10px] text-slate-600 uppercase mb-1">Fear & greed</div>
-                {macro && <FGGauge data={macro.fearGreed}/>}
+          {/* Price/Score Chart */}
+          {cs.history.length > 1 && (
+            <div className="mt-5 pt-4 border-t border-gray-100">
+              <div className="flex gap-4 text-xs text-gray-400 mb-2">
+                <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-gray-800 inline-block" /> Price</span>
+                <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-blue-500 inline-block" /> Score</span>
               </div>
-              <div className="bg-slate-900/40 rounded-xl p-4">
-                <div className="text-[10px] text-slate-600 uppercase mb-1">Macro score</div>
-                <div className={`text-3xl font-bold ${biasCls(macro!.overall.condition)}`}>{macro!.overall.score > 0 ? "+" : ""}{macro!.overall.score}</div>
-                <div className={`text-xs ${biasCls(macro!.overall.condition)}`}>{macro!.overall.condition.replace(/_/g, " ")}</div>
-              </div>
-              <div className="bg-slate-900/40 rounded-xl p-4">
-                <div className="text-[10px] text-slate-600 uppercase mb-1">Signals</div>
-                <div className="flex gap-4 text-2xl font-bold">
-                  <span className="text-emerald-400">{counts.buy}</span>
-                  <span className="text-red-400">{counts.sell}</span>
-                  <span className="text-slate-600">{counts.hold}</span>
-                </div>
-                <div className="text-[10px] text-slate-700">buy &middot; sell &middot; hold</div>
-              </div>
-              <div className="bg-slate-900/40 rounded-xl p-4">
-                <div className="text-[10px] text-slate-600 uppercase mb-1">VIX</div>
-                <div className="text-3xl font-bold">{macro!.vix.level}</div>
-                <div className={`text-xs ${biasCls(String(macro!.vix.bias))}`}>{String(macro!.vix.regime)}</div>
-              </div>
-            </div>
-
-            {/* Sectors */}
-            {macro!.sectors.rankings.length > 0 && (
-              <div className="flex flex-wrap gap-1.5">
-                {macro!.sectors.rankings.map((s) => (
-                  <span key={s.etf} className="bg-slate-800/40 rounded px-2 py-1 text-[11px]">
-                    <span className="text-slate-500">{s.sector}</span>
-                    <span className={`ml-1 font-semibold ${pctCls(s.pct5d)}`}>{s.pct5d > 0 ? "+" : ""}{s.pct5d.toFixed(1)}%</span>
-                  </span>
-                ))}
-              </div>
-            )}
-
-            {/* Signal table + detail */}
-            <div className="grid grid-cols-1 lg:grid-cols-[420px_1fr] gap-4">
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-semibold text-slate-400">Signals</span>
-                  <div className="flex gap-1">
-                    {(["ALL","BUY","SELL","HIGH"] as Filter[]).map((f)=>(
-                      <button key={f} onClick={()=>setFilter(f)}
-                        className={`text-[10px] px-2.5 py-0.5 rounded transition-colors ${filter===f?"bg-blue-600 text-white":"bg-slate-800/40 text-slate-600 hover:text-slate-400"}`}>
-                        {f==="HIGH"?"High conf":f}
-                      </button>
-                    ))}
+              <PriceScoreChart history={cs.history} />
+              <div className="grid grid-cols-3 gap-3 mt-3">
+                <div className="text-center p-2 bg-gray-50 rounded-lg">
+                  <div className="text-xs text-gray-500">30D Trend</div>
+                  <div className={cn("font-semibold", cs.trend30d > 0 ? "text-green-600" : cs.trend30d < 0 ? "text-red-600" : "text-gray-600")}>
+                    {cs.trend30d > 0 ? "+" : ""}{cs.trend30d}
                   </div>
                 </div>
-                <div className="grid grid-cols-[80px_48px_60px_70px_70px_70px_50px_60px] px-3 mb-1 text-[9px] text-slate-700 uppercase">
-                  <span>Ticker</span><span>Signal</span><span className="text-center">Conf</span>
-                  <span className="text-center">Entry</span><span className="text-center">Stop</span>
-                  <span className="text-center">Target</span><span className="text-center">R:R</span>
-                  <span className="text-center">Score</span>
+                <div className="text-center p-2 bg-gray-50 rounded-lg">
+                  <div className="text-xs text-gray-500">Price vs Score</div>
+                  <div className="font-semibold text-sm">{cs.priceScoreCorrelation.toLowerCase()}</div>
                 </div>
-                <div className="space-y-0.5 max-h-[60vh] overflow-y-auto">
-                  {filtered.map((sig)=>(
-                    <SignalRow key={sig.ticker} sig={sig} selected={sig.ticker === selected} onClick={()=>setSelected(sig.ticker)}/>
-                  ))}
-                  {filtered.length === 0 && <p className="text-center text-slate-700 py-8 text-sm">No signals match this filter.</p>}
+                <div className="text-center p-2 bg-gray-50 rounded-lg">
+                  <div className="text-xs text-gray-500">Score Lead</div>
+                  <div className="font-semibold">{cs.leadDays}d</div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Sentiment */}
+        <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100">
+          <h3 className="text-base font-semibold mb-4">Reddit Sentiment</h3>
+          {sent?.current ? (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <div className="text-xs text-gray-500">Sentiment</div>
+                  <div className={cn("text-2xl font-bold",
+                    sent.current.sentiment > 0.55 ? "text-green-600" : sent.current.sentiment < 0.45 ? "text-red-600" : "text-yellow-600"
+                  )}>
+                    {(sent.current.sentiment * 100).toFixed(0)}%
+                  </div>
+                  <div className="text-xs text-gray-400">30d avg: {(sent.avg30d.sentiment * 100).toFixed(0)}%</div>
+                </div>
+                <div>
+                  <div className="text-xs text-gray-500">Mentions</div>
+                  <div className="text-2xl font-bold">{sent.current.mentions}</div>
+                  <div className="text-xs text-gray-400">
+                    30d avg: {sent.avg30d.mentions}
+                    <span className={cn("ml-1", sent.mentionChangePct > 0 ? "text-green-600" : "text-red-600")}>
+                      ({pct(sent.mentionChangePct)})
+                    </span>
+                  </div>
                 </div>
               </div>
               <div>
-                {selectedSig ? <DetailView sig={selectedSig}/> : (
-                  <div className="flex items-center justify-center py-20 text-slate-700 text-sm">Click a signal to see details</div>
+                <div className="text-xs text-gray-500 mb-1">Trend: <span className={cn("font-medium",
+                  sent.sentimentTrend === "RISING" ? "text-green-600" : sent.sentimentTrend === "FALLING" ? "text-red-600" : "text-gray-600"
+                )}>{sent.sentimentTrend}</span></div>
+                {sent.history.length > 1 && (
+                  <Sparkline data={sent.history.map((h) => h.sentiment)} width={280} height={40}
+                    color={sent.sentimentTrend === "RISING" ? "#16a34a" : sent.sentimentTrend === "FALLING" ? "#dc2626" : "#6b7280"} />
                 )}
               </div>
             </div>
+          ) : (
+            <div className="text-gray-400 text-sm py-8 text-center">
+              No sentiment data<br />
+              <span className="text-xs">Add ALTINDEX_API_KEY to enable</span>
+            </div>
+          )}
+
+          {/* Signal Reasons */}
+          <div className="mt-6 pt-4 border-t border-gray-100">
+            <h4 className="text-sm font-semibold mb-2">Signal Reasons</h4>
+            <div className="space-y-1">
+              {sig.reasons.map((r, i) => (
+                <div key={i} className="flex items-start gap-2 text-sm text-gray-600">
+                  <span className={cn("mt-1 w-1.5 h-1.5 rounded-full shrink-0",
+                    sig.direction === "BUY" ? "bg-green-500" : sig.direction === "SELL" ? "bg-red-500" : "bg-gray-400"
+                  )} />
+                  {r}
+                </div>
+              ))}
+            </div>
           </div>
+        </div>
+      </div>
+
+      {/* Holding Period Outlook */}
+      <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100">
+        <h3 className="text-base font-semibold mb-4">Holding Period Outlook</h3>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-gray-100">
+                <th className="text-left py-2 pr-4 text-gray-500 font-medium"></th>
+                {ol.periods.map((p) => (
+                  <th key={p.days} className={cn("text-center py-2 px-4 font-semibold",
+                    p.days === ol.sweetSpot ? "text-blue-600" : ""
+                  )}>
+                    {p.days}D
+                    {p.days === ol.sweetSpot && <span className="block text-xs font-normal text-blue-400">best R:R</span>}
+                    <span className="block text-xs font-normal text-gray-400">{p.date}</span>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              <tr className="border-b border-gray-50">
+                <td className="py-3 pr-4 text-gray-600">Expected Move</td>
+                {ol.periods.map((p) => (
+                  <td key={p.days} className="text-center py-3 px-4">
+                    <span className={cn("font-semibold", p.expectedMove >= 0 ? "text-green-600" : "text-red-600")}>
+                      {p.expectedMove >= 0 ? "+" : ""}${fmt(p.expectedMove)}
+                    </span>
+                    <span className="block text-xs text-gray-400">{pct(p.expectedMovePct)}</span>
+                  </td>
+                ))}
+              </tr>
+              <tr className="border-b border-gray-50">
+                <td className="py-3 pr-4 text-gray-600">T1 Hit Prob</td>
+                {ol.periods.map((p) => (
+                  <td key={p.days} className="text-center py-3 px-4">
+                    <ProbBar value={p.t1HitProb} />
+                  </td>
+                ))}
+              </tr>
+              <tr className="border-b border-gray-50">
+                <td className="py-3 pr-4 text-gray-600">T2 Hit Prob</td>
+                {ol.periods.map((p) => (
+                  <td key={p.days} className="text-center py-3 px-4">
+                    <ProbBar value={p.t2HitProb} />
+                  </td>
+                ))}
+              </tr>
+              <tr className="border-b border-gray-50">
+                <td className="py-3 pr-4 text-gray-600">T3 Hit Prob</td>
+                {ol.periods.map((p) => (
+                  <td key={p.days} className="text-center py-3 px-4">
+                    <ProbBar value={p.t3HitProb} />
+                  </td>
+                ))}
+              </tr>
+              <tr className="border-b border-gray-50">
+                <td className="py-3 pr-4 text-gray-600">Stop Risk</td>
+                {ol.periods.map((p) => (
+                  <td key={p.days} className="text-center py-3 px-4">
+                    <span className={cn("font-semibold", p.stopRiskPct > 30 ? "text-red-600" : p.stopRiskPct > 15 ? "text-orange-500" : "text-green-600")}>
+                      {p.stopRiskPct}%
+                    </span>
+                  </td>
+                ))}
+              </tr>
+              <tr>
+                <td className="py-3 pr-4 text-gray-600">Expected R:R</td>
+                {ol.periods.map((p) => (
+                  <td key={p.days} className={cn("text-center py-3 px-4 font-bold",
+                    p.days === ol.sweetSpot ? "text-blue-600" : ""
+                  )}>
+                    {fmt(p.expectedRR, 1)}
+                  </td>
+                ))}
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div className="flex gap-4 mt-4 text-sm">
+          <div className="px-3 py-2 bg-blue-50 rounded-lg text-blue-700">Sweet Spot: <strong>{ol.sweetSpot}d</strong> (R:R {fmt(ol.sweetSpotRR, 1)})</div>
+          <div className="px-3 py-2 bg-gray-50 rounded-lg text-gray-600">ATR/Day: <strong>${fmt(ol.atrPerDay)}</strong></div>
+        </div>
+      </div>
+
+      {/* Entry/Exit Matrix */}
+      <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100">
+        <h3 className="text-base font-semibold mb-4">Entry / Exit Matrix</h3>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Entries */}
+          <div>
+            <h4 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Entries</h4>
+            {mx.entries.map((e) => (
+              <div key={e.label} className="mb-3 p-3 bg-green-50 rounded-lg border border-green-100">
+                <div className="flex justify-between items-baseline">
+                  <span className="font-semibold text-green-800">{e.label}</span>
+                  <span className="text-lg font-bold text-green-700">${fmt(e.price)}</span>
+                </div>
+                <div className="text-xs text-green-600 mt-1">{e.distance} &middot; {e.note}</div>
+                {e.projectedPL.length > 0 && (
+                  <div className="flex gap-3 mt-2 text-xs">
+                    {e.projectedPL.map((pl) => (
+                      <span key={pl.days} className={cn(pl.amount >= 0 ? "text-green-700" : "text-red-600")}>
+                        {pl.days}d: {pl.amount >= 0 ? "+" : ""}${fmt(pl.amount)} ({pct(pl.pct)})
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {/* Stops */}
+          <div>
+            <h4 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Stops</h4>
+            {mx.stops.map((s) => (
+              <div key={s.label} className="mb-3 p-3 bg-red-50 rounded-lg border border-red-100">
+                <div className="flex justify-between items-baseline">
+                  <span className="font-semibold text-red-800">{s.label}</span>
+                  <span className="text-lg font-bold text-red-700">${fmt(s.price)}</span>
+                </div>
+                <div className="text-xs text-red-600 mt-1">Risk: ${fmt(s.riskPerShare)}/share &middot; {s.note}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Targets */}
+          <div>
+            <h4 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Targets</h4>
+            {mx.targets.map((t) => (
+              <div key={t.label} className="mb-3 p-3 bg-blue-50 rounded-lg border border-blue-100">
+                <div className="flex justify-between items-baseline">
+                  <span className="font-semibold text-blue-800">{t.label}</span>
+                  <span className="text-lg font-bold text-blue-700">${fmt(t.price)}</span>
+                </div>
+                <div className="text-xs text-blue-600 mt-1">
+                  {pct(t.distancePct)} &middot; R:R {fmt(t.rrRatio, 1)} &middot; {t.scaling}
+                </div>
+                {t.hitProb.length > 0 && (
+                  <div className="flex gap-3 mt-2 text-xs text-blue-600">
+                    {t.hitProb.map((hp) => (
+                      <span key={hp.days}>{hp.days}d: {hp.prob}%</span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="flex gap-4 mt-4 text-sm">
+          <div className="px-3 py-2 bg-gray-50 rounded-lg">Best R:R: <strong>{fmt(mx.bestCaseRR, 1)}</strong></div>
+          <div className="px-3 py-2 bg-gray-50 rounded-lg">Expected R:R: <strong>{fmt(mx.expectedRR, 1)}</strong></div>
+          <div className="px-3 py-2 bg-gray-50 rounded-lg">Max Risk: <strong>${fmt(mx.maxRisk)}/share</strong></div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Price/Score Overlay Chart ─────────────────────────────────
+
+function PriceScoreChart({ history }: { history: { date: string; score: number; close: number }[] }) {
+  const w = 440, h = 120, pad = { t: 8, r: 8, b: 20, l: 8 };
+  const pw = w - pad.l - pad.r, ph = h - pad.t - pad.b;
+  const prices = history.map((d) => d.close);
+  const scores = history.map((d) => d.score);
+  const pMin = Math.min(...prices), pMax = Math.max(...prices);
+  const pRange = pMax - pMin || 1;
+
+  const pricePath = history.map((d, i) => {
+    const x = pad.l + (i / (history.length - 1)) * pw;
+    const y = pad.t + ph - ((d.close - pMin) / pRange) * ph;
+    return `${i === 0 ? "M" : "L"}${x},${y}`;
+  }).join(" ");
+
+  const scorePath = history.map((d, i) => {
+    const x = pad.l + (i / (history.length - 1)) * pw;
+    const y = pad.t + ph - (d.score / 100) * ph;
+    return `${i === 0 ? "M" : "L"}${x},${y}`;
+  }).join(" ");
+
+  return (
+    <svg width="100%" viewBox={`0 0 ${w} ${h}`} className="overflow-visible">
+      <path d={pricePath} fill="none" stroke="#1a1a2e" strokeWidth="1.5" />
+      <path d={scorePath} fill="none" stroke="#2563eb" strokeWidth="1.5" strokeDasharray="4,2" />
+    </svg>
+  );
+}
+
+// ── Probability Bar ───────────────────────────────────────────
+
+function ProbBar({ value }: { value: number }) {
+  const color = value >= 50 ? "bg-green-500" : value >= 30 ? "bg-yellow-400" : "bg-red-400";
+  const textColor = value >= 50 ? "text-green-700" : value >= 30 ? "text-yellow-700" : "text-red-600";
+  return (
+    <div>
+      <span className={cn("font-semibold text-sm", textColor)}>{value}%</span>
+      <div className="w-full h-1.5 bg-gray-100 rounded-full mt-1">
+        <div className={cn("h-full rounded-full", color)} style={{ width: `${value}%` }} />
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════
+// PAGE — Root component
+// ══════════════════════════════════════════════════════════════
+
+export default function Home() {
+  const [watchlist, setWatchlist] = useState<string[]>([]);
+  const [data, setData] = useState<ScanResult | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [selectedTicker, setSelectedTicker] = useState<string | null>(null);
+  const [addInput, setAddInput] = useState("");
+
+  // Load watchlist on mount
+  useEffect(() => {
+    fetch("/api/watchlist").then((r) => r.json()).then((d) => {
+      if (d.tickers) setWatchlist(d.tickers);
+    }).catch(() => {});
+  }, []);
+
+  const scan = useCallback(async () => {
+    if (watchlist.length === 0) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const resp = await fetch("/api/scan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tickers: watchlist }),
+      });
+      if (!resp.ok) throw new Error(`Scan failed (${resp.status})`);
+      const result: ScanResult = await resp.json();
+      setData(result);
+      setSelectedTicker(null);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setLoading(false);
+    }
+  }, [watchlist]);
+
+  const addTicker = async () => {
+    const t = addInput.trim().toUpperCase();
+    if (!t || watchlist.includes(t)) return;
+    const next = [...watchlist, t];
+    setWatchlist(next);
+    setAddInput("");
+    await fetch("/api/watchlist", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tickers: next }),
+    }).catch(() => {});
+  };
+
+  const removeTicker = async (t: string) => {
+    const next = watchlist.filter((x) => x !== t);
+    setWatchlist(next);
+    await fetch("/api/watchlist", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tickers: next }),
+    }).catch(() => {});
+  };
+
+  const selectedSignal = data?.signals.find((s) => s.ticker === selectedTicker) ?? null;
+
+  return (
+    <div className="min-h-screen">
+      {/* Top Bar */}
+      <header className="bg-white border-b border-gray-200 sticky top-0 z-50">
+        <div className="max-w-7xl mx-auto px-4 py-3 flex items-center gap-4">
+          <div className="shrink-0">
+            <div className="text-xl font-bold text-gray-900">Swing Trader</div>
+          </div>
+
+          {/* Ticker chips */}
+          <div className="flex-1 flex flex-wrap items-center gap-1.5 min-w-0">
+            {watchlist.map((t) => (
+              <span key={t} className={cn(
+                "inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-sm font-medium border cursor-pointer transition-colors",
+                selectedTicker === t
+                  ? "bg-blue-600 text-white border-blue-600"
+                  : "bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100"
+              )}
+                onClick={() => {
+                  if (data) setSelectedTicker(selectedTicker === t ? null : t);
+                }}
+              >
+                {t}
+                <button onClick={(e) => { e.stopPropagation(); removeTicker(t); }}
+                  className={cn("ml-0.5 rounded-full w-4 h-4 flex items-center justify-center text-xs leading-none hover:bg-black/10",
+                    selectedTicker === t ? "text-white/70 hover:text-white" : "text-gray-400 hover:text-gray-600"
+                  )}>
+                  &times;
+                </button>
+              </span>
+            ))}
+            <form onSubmit={(e) => { e.preventDefault(); addTicker(); }} className="inline-flex items-center">
+              <input value={addInput} onChange={(e) => setAddInput(e.target.value)}
+                placeholder="Add..."
+                className="w-20 px-2 py-1 text-sm border border-gray-200 rounded-lg focus:outline-none focus:border-blue-400 bg-transparent" />
+            </form>
+          </div>
+
+          <button onClick={scan} disabled={loading || watchlist.length === 0}
+            className={cn(
+              "px-5 py-2 rounded-lg text-sm font-semibold text-white transition-colors shrink-0",
+              loading ? "bg-blue-400 cursor-wait" : "bg-blue-600 hover:bg-blue-700"
+            )}>
+            {loading ? "Scanning..." : "Scan"}
+          </button>
+        </div>
+      </header>
+
+      {/* Content */}
+      <main className="max-w-7xl mx-auto px-4 py-6">
+        {error && (
+          <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{error}</div>
+        )}
+
+        {!data && !loading && (
+          <div className="text-center py-20">
+            <div className="text-5xl mb-4">&#128202;</div>
+            <div className="text-xl font-semibold text-gray-700 mb-2">Ready to scan</div>
+            <div className="text-gray-500">Add tickers above and hit Scan to analyze your watchlist</div>
+          </div>
+        )}
+
+        {loading && (
+          <div className="text-center py-20">
+            <div className="text-5xl mb-4 animate-pulse-glow">&#128225;</div>
+            <div className="text-xl font-semibold text-gray-700 mb-2">Scanning {watchlist.length} tickers...</div>
+            <div className="text-gray-500">Fetching data, running technicals, analyzing sentiment</div>
+          </div>
+        )}
+
+        {data && !loading && !selectedSignal && (
+          <MainView data={data} onSelect={setSelectedTicker} />
+        )}
+
+        {data && !loading && selectedSignal && (
+          <DetailView signal={selectedSignal} macro={data.macro} onBack={() => setSelectedTicker(null)} />
         )}
       </main>
     </div>
